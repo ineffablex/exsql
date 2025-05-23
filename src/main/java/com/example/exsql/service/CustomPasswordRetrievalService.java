@@ -19,57 +19,87 @@ public class CustomPasswordRetrievalService {
     private static final Logger logger = LoggerFactory.getLogger(CustomPasswordRetrievalService.class);
 
     @Value("${app.datasource.cndl.auth-file-path}")
-    private String cndlAuthFilePath;
+    private String cndlAuthFilePath; // This will be used for the primary datasource init
 
+    // Primary datasource CNLDB parameters - kept for @PostConstruct initialization
     @Value("${app.datasource.cndl.ndbtype}")
-    private int cndlNDbType;
+    private int primaryCndlNDbType;
 
     @Value("${app.datasource.cndl.tns}")
-    private String cndlTns;
+    private String primaryCndlTns;
 
-    // This URL is passed directly to getPasswd. Its specific use depends on CNLDBConnectMgr's logic.
-    @Value("${app.datasource.cndl.getpasswd-url:}") // Default to empty if not provided
-    private String cndlGetPasswdUrl;
+    @Value("${app.datasource.cndl.getpasswd-url:}")
+    private String primaryCndlGetPasswdUrl;
 
-    // This dummy password is passed to getPasswd. 
-    @Value("${app.datasource.cndl.getpasswd-dummy-password:}") // Default to empty if not provided
-    private String cndlGetPasswdDummyPassword;
+    @Value("${app.datasource.cndl.getpasswd-dummy-password:}")
+    private String primaryCndlGetPasswdDummyPassword;
 
-    private boolean initialized = false;
+    private boolean cndlMgrInitialized = false;
 
     @PostConstruct
     public void initialize() {
+        // Initialize CNLDBConnectMgr using properties for the primary datasource's auth file.
+        // This assumes CNLDBConnectMgr.init() is a one-time global setup and subsequent
+        // getPasswd calls can target different TNS/users if the underlying auth mechanism supports it.
+        // If different auth files *must* be loaded by init() for different datasources,
+        // this approach will need significant change (e.g. multiple CNLDBConnectMgr instances or re-init capability).
+        logger.info("Initializing CNLDBConnectMgr with primary auth file path: {}", cndlAuthFilePath);
         try {
-            CNLDBConnectMgr.init();
-            initialized = true;
+            // Assuming cndlAuthFilePath is correctly injected for the primary datasource's init file
+            // If CNLDBConnectMgr uses this path internally after init, it might be an issue.
+            // For now, we proceed with the assumption that init() is for global setup.
+            CNLDBConnectMgr.init(); // This might need to be called with auth-file path if the lib supports it
+            cndlMgrInitialized = true;
+            logger.info("CNLDBConnectMgr initialized successfully.");
         } catch (Exception e) {
-            logger.error("Failed to initialize CNLDBConnectMgr using auth file path: {}. Error: {}", cndlAuthFilePath, e.getMessage(), e);
-            // Depending on policy, you might want to rethrow or prevent app startup
+            logger.error("Failed to initialize CNLDBConnectMgr. Error: {}", e.getMessage(), e);
             throw new RuntimeException("Failed to initialize CNLDBConnectMgr: " + e.getMessage(), e);
         }
     }
 
-    public String retrievePassword(String username) {
-        if (!initialized) {
-            logger.error("CNLDBConnectMgr was not initialized successfully. Cannot retrieve password.");
-            throw new IllegalStateException("CNLDBConnectMgr not initialized.");
+    // Method for primary datasource, using fields initialized by @Value
+    public String retrievePrimaryPassword(String username) {
+        if (!cndlMgrInitialized) {
+            logger.error("CNLDBConnectMgr was not initialized. Cannot retrieve password for primary datasource.");
+            throw new IllegalStateException("CNLDBConnectMgr not initialized for primary datasource.");
         }
-        logger.info("Retrieving password using CNLDBConnectMgr for user: {}, tns: {}, nDbType: {}", username, cndlTns, cndlNDbType);
-        logger.info("Parameters for CNLDBConnectMgr.getPasswd -> url: '{}', dummyPassword: '{}'", cndlGetPasswdUrl, "*****"); // Log dummy password carefully
+        logger.info("Retrieving password for primary datasource user: {}, tns: {}, nDbType: {}", username, primaryCndlTns, primaryCndlNDbType);
+        logger.info("Primary Parameters for CNLDBConnectMgr.getPasswd -> url: '{}', dummyPassword: '{}'", primaryCndlGetPasswdUrl, "*****");
 
         try {
-            // Calling the specific getPasswd method as requested by the user:
-            // String realPass = CNLDBConnectMgr.getPasswd(2, tns, userName, url, passWord);
-            String password = CNLDBConnectMgr.getPasswd(cndlNDbType, cndlTns, username, cndlGetPasswdUrl, cndlGetPasswdDummyPassword);
+            String password = CNLDBConnectMgr.getPasswd(primaryCndlNDbType, primaryCndlTns, username, primaryCndlGetPasswdUrl, primaryCndlGetPasswdDummyPassword);
             if (password == null) {
-                logger.error("CNLDBConnectMgr.getPasswd returned null for user: {}", username);
-                throw new RuntimeException("Failed to retrieve password using CNLDBConnectMgr, returned null.");
+                logger.error("CNLDBConnectMgr.getPasswd returned null for primary user: {}", username);
+                throw new RuntimeException("Failed to retrieve password for primary datasource, CNLDBConnectMgr returned null.");
             }
-            logger.info("Password retrieved successfully for user: {}", username);
+            logger.info("Password retrieved successfully for primary user: {}", username);
             return password;
         } catch (Exception e) {
-            logger.error("Error retrieving password using CNLDBConnectMgr for user {}: {}", username, e.getMessage(), e);
-            throw new RuntimeException("Error retrieving password via CNLDBConnectMgr: " + e.getMessage(), e);
+            logger.error("Error retrieving password for primary user {} using CNLDBConnectMgr: {}", username, e.getMessage(), e);
+            throw new RuntimeException("Error retrieving password for primary datasource via CNLDBConnectMgr: " + e.getMessage(), e);
+        }
+    }
+
+    // Overloaded method to accept specific CNLDB parameters for any datasource
+    public String retrievePassword(String username, int nDbType, String tns, String getPasswdUrl, String dummyPassword, String dsName) {
+        if (!cndlMgrInitialized) {
+            logger.error("CNLDBConnectMgr was not initialized. Cannot retrieve password for datasource: {}", dsName);
+            throw new IllegalStateException("CNLDBConnectMgr not initialized for datasource: " + dsName);
+        }
+        logger.info("Retrieving password for {} datasource user: {}, tns: {}, nDbType: {}", dsName, username, tns, nDbType);
+        logger.info("{} Parameters for CNLDBConnectMgr.getPasswd -> url: '{}', dummyPassword: '{}'", StringUtils.capitalize(dsName), getPasswdUrl, "*****");
+
+        try {
+            String password = CNLDBConnectMgr.getPasswd(nDbType, tns, username, getPasswdUrl, dummyPassword);
+            if (password == null) {
+                logger.error("CNLDBConnectMgr.getPasswd returned null for {} user: {}", dsName, username);
+                throw new RuntimeException("Failed to retrieve password for " + dsName +" datasource, CNLDBConnectMgr returned null.");
+            }
+            logger.info("Password retrieved successfully for {} user: {}", dsName, username);
+            return password;
+        } catch (Exception e) {
+            logger.error("Error retrieving password for {} user {} using CNLDBConnectMgr: {}", dsName, username, e.getMessage(), e);
+            throw new RuntimeException("Error retrieving password for " + dsName + " datasource via CNLDBConnectMgr: " + e.getMessage(), e);
         }
     }
 } 

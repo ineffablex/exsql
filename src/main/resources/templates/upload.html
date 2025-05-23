@@ -28,6 +28,14 @@
                     <input class="form-control" type="file" id="sqlFiles" name="files" multiple required accept=".sql,.txt">
                      <div class="form-text">You can select multiple files. Ensure they are UTF-8 encoded.</div>
                 </div>
+                <div class="mb-3">
+                    <label for="dataSourceName" class="form-label">Data Source:</label>
+                    <select class="form-select" id="dataSourceName" name="dataSourceName">
+                        <th:block th:each="dsName : ${dataSourceNames}">
+                            <option th:value="${dsName}" th:text="${dsName.substring(0,1).toUpperCase() + dsName.substring(1)}" th:selected="${dsName == 'primary'}"></option>
+                        </th:block>
+                    </select>
+                </div>
                 <button type="submit" class="btn btn-primary w-100">Upload and Execute</button>
             </form>
         </div>
@@ -77,8 +85,8 @@
   </div>
 </footer>
 
-<script th:src="@{/webjars/jquery/3.7.1/jquery.min.js}"></script>
-<script th:src="@{/webjars/popper.js/2.11.7/dist/umd/popper.min.js}"></script>
-<script th:src="@{/webjars/bootstrap/5.3.2/js/bootstrap.min.js}"></script>
+<script defer th:src="@{/webjars/jquery/3.7.1/jquery.min.js}"></script>
+<script defer th:src="@{/webjars/popper.js/2.11.7/dist/umd/popper.min.js}"></script>
+<script defer th:src="@{/webjars/bootstrap/5.3.2/js/bootstrap.min.js}"></script>
 </body>
 </html> 
