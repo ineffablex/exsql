@@ -20,18 +20,43 @@ public class SqlExecutionService {
 
     private static final Logger logger = LoggerFactory.getLogger(SqlExecutionService.class);
 
-    @Autowired
-    private JdbcTemplate jdbcTemplate;
+    private final JdbcTemplate primaryJdbcTemplate;
+    private final JdbcTemplate secondaryJdbcTemplate;
 
-    public List<ScriptExecutionResult> executeSqlScripts(MultipartFile[] files) {
+    @Autowired
+    public SqlExecutionService(JdbcTemplate jdbcTemplate,
+                               @org.springframework.beans.factory.annotation.Qualifier("dataSource2") javax.sql.DataSource dataSource2) {
+        this.primaryJdbcTemplate = jdbcTemplate; // This is the default JdbcTemplate from the primary DataSource
+        this.secondaryJdbcTemplate = new JdbcTemplate(dataSource2);
+    }
+
+    public List<ScriptExecutionResult> executeSqlScripts(MultipartFile[] files, String dataSourceName) {
         List<ScriptExecutionResult> results = new ArrayList<>();
+        JdbcTemplate selectedJdbcTemplate;
+
+        if ("secondary".equalsIgnoreCase(dataSourceName)) {
+            selectedJdbcTemplate = secondaryJdbcTemplate;
+            logger.info("Executing scripts on secondary data source.");
+        } else if ("primary".equalsIgnoreCase(dataSourceName) || dataSourceName == null || dataSourceName.isEmpty()) {
+            selectedJdbcTemplate = primaryJdbcTemplate;
+            logger.info("Executing scripts on primary data source.");
+        } else {
+            logger.error("Invalid data source name provided: {}", dataSourceName);
+            // Handle invalid data source name, perhaps by returning an error for all files
+            // or throwing an IllegalArgumentException. For now, log and skip execution.
+            for (MultipartFile file : files) {
+                results.add(new ScriptExecutionResult(file.getOriginalFilename(), false, "Invalid data source name: " + dataSourceName, ""));
+            }
+            return results;
+        }
+
         for (MultipartFile file : files) {
-            results.add(executeSingleScript(file));
+            results.add(executeSingleScript(file, selectedJdbcTemplate));
         }
         return results;
     }
 
-    private ScriptExecutionResult executeSingleScript(MultipartFile file) {
+    private ScriptExecutionResult executeSingleScript(MultipartFile file, JdbcTemplate jdbcTemplate) {
         String fileName = file.getOriginalFilename();
         String sqlContent = null;
         try {
@@ -52,8 +77,9 @@ public class SqlExecutionService {
             // Trim leading/trailing whitespace from the whole script
             sqlContent = sqlContent.trim();
 
-            logger.info("Executing script: {}. Content length: {}", fileName, sqlContent.length());
-            // logger.debug("Script content for {}:\n{}", fileName, sqlContent); // Be cautious with logging full SQL in production
+            logger.info("Executing script: {} using {}. Content length: {}", fileName, 
+                (jdbcTemplate == primaryJdbcTemplate ? "primary" : "secondary") + " JdbcTemplate", 
+                sqlContent.length());
 
             // Determine execution type (simple heuristic)
             boolean isPlSqlBlock = sqlContent.toUpperCase().contains("DECLARE") ||
@@ -62,17 +88,10 @@ public class SqlExecutionService {
 
             if (isPlSqlBlock) {
                 logger.info("Detected PL/SQL block for file: {}", fileName);
-                // For PL/SQL blocks, execute the entire content as one statement.
-                // Oracle typically expects PL/SQL blocks to be executed as a whole.
-                // If it ends with '/', it's a strong indicator for tools like SQL*Plus, but JDBC might not need it explicitly removed if the block is well-formed.
-                // We'll execute it as is. If it contains multiple PL/SQL blocks separated by '/', this approach might need refinement.
                 jdbcTemplate.execute(sqlContent);
                 return new ScriptExecutionResult(fileName, true, "PL/SQL block executed successfully.", sqlContent);
             } else {
                 logger.info("Detected plain SQL statements for file: {}", fileName);
-                // For plain SQL, split by semicolon if multiple statements exist.
-                // This is a basic split; more complex scenarios (e.g., semicolons in strings/comments) aren't handled here.
-                // Also, some databases might have issues with empty statements after splitting.
                 String[] statements = sqlContent.split(";(?=(?:[^']*'[^']*')*[^']*$)"); // Split by semicolon, ignoring those inside quotes
                 
                 int executedCount = 0;
@@ -85,7 +104,6 @@ public class SqlExecutionService {
                            executedCount++;
                         } catch (Exception e) {
                             logger.error("Error executing statement in file {}: {}\nStatement: {}", fileName, e.getMessage(), trimmedStmt, e);
-                            // Return on first error within the script for simplicity
                             return new ScriptExecutionResult(fileName, false, "Error executing statement: " + e.getMessage() + "\nProblematic statement: " + trimmedStmt, sqlContent);
                         }
                     }

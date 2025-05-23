@@ -38,11 +38,15 @@ public class SqlUploadController {
          if (!model.containsAttribute("successMessage")) {
             model.addAttribute("successMessage", null);
         }
+        // Add data source names for the UI
+        model.addAttribute("dataSourceNames", Arrays.asList("primary", "secondary"));
         return "upload";
     }
 
     @PostMapping("/upload")
-    public String uploadAndExecuteSql(@RequestParam("files") MultipartFile[] files, RedirectAttributes redirectAttributes, Model model) {
+    public String uploadAndExecuteSql(@RequestParam("files") MultipartFile[] files,
+                                      @RequestParam(name = "dataSourceName", defaultValue = "primary") String dataSourceName,
+                                      RedirectAttributes redirectAttributes, Model model) {
         if (files == null || files.length == 0 || Arrays.stream(files).allMatch(MultipartFile::isEmpty)) {
             redirectAttributes.addFlashAttribute("error", "Please select one or more SQL script files to upload.");
             return "redirect:/";
@@ -59,7 +63,8 @@ public class SqlUploadController {
         }
 
         try {
-            List<ScriptExecutionResult> results = sqlExecutionService.executeSqlScripts(nonEmptyFiles.toArray(new MultipartFile[0]));
+            logger.info("Received request to execute scripts on data source: {}", dataSourceName);
+            List<ScriptExecutionResult> results = sqlExecutionService.executeSqlScripts(nonEmptyFiles.toArray(new MultipartFile[0]), dataSourceName);
             redirectAttributes.addFlashAttribute("results", results);
             boolean allSuccess = results.stream().allMatch(ScriptExecutionResult::isSuccess);
             if (allSuccess) {
