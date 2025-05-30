@@ -20,91 +20,107 @@ public class DataSourceConfig {
 
     private static final Logger logger = LoggerFactory.getLogger(DataSourceConfig.class);
 
-    @Autowired
-    private CustomPasswordRetrievalService passwordRetrievalService;
+import com.example.exsql.model.DataSourceDefinition;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.autoconfigure.jdbc.DataSourceProperties; // Keep for property reading if needed by a helper
+import org.springframework.boot.context.properties.EnableConfigurationProperties; // If using @ConfigurationProperties on a class
+import org.springframework.core.env.Environment; // Alternative for property reading
 
-    // Properties for Primary DataSource CNLDB
-    @Value("${app.datasource.cndl.ndbtype}")
-    private int primaryCndlNDbType;
-    @Value("${app.datasource.cndl.tns}")
+import javax.sql.DataSource; // Will be removed from direct usage here
+import java.util.HashMap;
+import java.util.Map;
+
+@Configuration
+// Consider @EnableConfigurationProperties if you create a dedicated properties class
+public class DataSourceConfig {
+
+    private static final Logger logger = LoggerFactory.getLogger(DataSourceConfig.class);
+
+    // Note: CustomPasswordRetrievalService is still a bean and can be autowired elsewhere if needed,
+    // but it's not directly used in this class anymore to create DataSource beans at startup.
+    // @Autowired
+    // private CustomPasswordRetrievalService passwordRetrievalService;
+
+    // Primary DataSource Properties
+    @Value("${spring.datasource.primary.url}")
+    private String primaryUrl;
+    @Value("${spring.datasource.primary.username}")
+    private String primaryUsername;
+    @Value("${spring.datasource.primary.driver-class-name}")
+    private String primaryDriverClassName;
+    @Value("${app.datasource.primary.cndl.auth-file-path}")
+    private String primaryCndlAuthFilePath;
+    @Value("${app.datasource.primary.cndl.ndbtype}")
+    private int primaryCndlNdbType;
+    @Value("${app.datasource.primary.cndl.tns}")
     private String primaryCndlTns;
-    @Value("${app.datasource.cndl.getpasswd-url:}")
+    @Value("${app.datasource.primary.cndl.getpasswd-url}")
     private String primaryCndlGetPasswdUrl;
-    @Value("${app.datasource.cndl.getpasswd-dummy-password:}")
+    @Value("${app.datasource.primary.cndl.getpasswd-dummy-password}")
     private String primaryCndlGetPasswdDummyPassword;
+    @Value("${app.datasource.primary.http-password.url:}") // Optional with default
+    private String primaryHttpPasswordUrl;
+    @Value("${app.datasource.primary.http-password.request-timeout-ms:5000}") // Optional with default
+    private int primaryHttpPasswordRequestTimeoutMs;
 
-    // Properties for Secondary DataSource CNLDB
-    @Value("${app.datasource2.cndl.ndbtype}")
-    private int secondaryCndlNDbType;
-    @Value("${app.datasource2.cndl.tns}")
+    // Secondary DataSource Properties
+    @Value("${spring.datasource.secondary.url}")
+    private String secondaryUrl;
+    @Value("${spring.datasource.secondary.username}")
+    private String secondaryUsername;
+    @Value("${spring.datasource.secondary.driver-class-name}")
+    private String secondaryDriverClassName;
+    @Value("${app.datasource.secondary.cndl.auth-file-path}")
+    private String secondaryCndlAuthFilePath;
+    @Value("${app.datasource.secondary.cndl.ndbtype}")
+    private int secondaryCndlNdbType;
+    @Value("${app.datasource.secondary.cndl.tns}")
     private String secondaryCndlTns;
-    @Value("${app.datasource2.cndl.getpasswd-url:}")
+    @Value("${app.datasource.secondary.cndl.getpasswd-url}")
     private String secondaryCndlGetPasswdUrl;
-    @Value("${app.datasource2.cndl.getpasswd-dummy-password:}")
+    @Value("${app.datasource.secondary.cndl.getpasswd-dummy-password}")
     private String secondaryCndlGetPasswdDummyPassword;
 
-
-    // Inject standard DataSourceProperties to get URL, username, driver etc.
-    // We will override the password.
     @Bean
-    @Primary
-    @ConfigurationProperties(prefix = "spring.datasource")
-    public DataSourceProperties dataSourceProperties() {
-        return new DataSourceProperties();
-    }
+    public Map<String, DataSourceDefinition> dataSourceDefinitions() {
+        Map<String, DataSourceDefinition> definitions = new HashMap<>();
 
-    @Bean
-    @Primary
-    public DataSource dataSource(DataSourceProperties properties) {
-        String username = properties.getUsername();
-        if (!StringUtils.hasText(username)) {
-            logger.error("Database username (spring.datasource.username) for primary datasource is not configured.");
-            throw new IllegalStateException("Database username for primary datasource is not configured.");
+        // Create Primary DataSourceDefinition
+        if (!StringUtils.hasText(primaryUrl) || !StringUtils.hasText(primaryUsername) || !StringUtils.hasText(primaryDriverClassName)) {
+            logger.error("Missing critical configuration for primary data source (url, username, or driverClassName).");
+            // Depending on policy, could throw an exception here to prevent app startup
+            // For now, just log and don't add it to definitions
+        } else {
+            DataSourceDefinition primaryDef = new DataSourceDefinition(
+                    "primary", primaryUrl, primaryUsername, primaryDriverClassName,
+                    primaryCndlAuthFilePath, primaryCndlNdbType, primaryCndlTns,
+                    primaryCndlGetPasswdUrl, primaryCndlGetPasswdDummyPassword
+            );
+            if (StringUtils.hasText(primaryHttpPasswordUrl)) {
+                primaryDef.setHttpPasswordUrl(primaryHttpPasswordUrl);
+                primaryDef.setHttpPasswordRequestTimeoutMs(primaryHttpPasswordRequestTimeoutMs);
+            }
+            definitions.put("primary", primaryDef);
+            logger.info("Primary data source definition created: {}", primaryDef.getName());
         }
 
-        logger.info("Attempting to retrieve dynamic password for primary datasource user: {}", username);
-        // Using the specific method for primary, which uses @Value injected fields in the service
-        String password = passwordRetrievalService.retrievePrimaryPassword(username);
-        logger.info("Dynamic password retrieved successfully for primary user: {}. Proceeding to configure primary DataSource.", username);
-
-        return DataSourceBuilder.create()
-                .url(properties.getUrl())
-                .username(username)
-                .password(password) // Use dynamically fetched password
-                .driverClassName(properties.getDriverClassName())
-                .build();
-    }
-
-    // Configuration for the second data source
-    @Bean(name = "dataSource2Properties")
-    @ConfigurationProperties(prefix = "spring.datasource2")
-    public DataSourceProperties dataSource2Properties() {
-        return new DataSourceProperties();
-    }
-
-    @Bean(name = "dataSource2")
-    public DataSource dataSource2(@org.springframework.beans.factory.annotation.Qualifier("dataSource2Properties") DataSourceProperties dataSource2Properties) {
-        String username = dataSource2Properties.getUsername();
-        if (!StringUtils.hasText(username)) {
-            logger.error("Database username (spring.datasource2.username) for secondary datasource is not configured.");
-            throw new IllegalStateException("Database username for secondary datasource is not configured.");
+        // Create Secondary DataSourceDefinition
+        if (!StringUtils.hasText(secondaryUrl) || !StringUtils.hasText(secondaryUsername) || !StringUtils.hasText(secondaryDriverClassName)) {
+            logger.error("Missing critical configuration for secondary data source (url, username, or driverClassName).");
+        } else {
+            DataSourceDefinition secondaryDef = new DataSourceDefinition(
+                    "secondary", secondaryUrl, secondaryUsername, secondaryDriverClassName,
+                    secondaryCndlAuthFilePath, secondaryCndlNdbType, secondaryCndlTns,
+                    secondaryCndlGetPasswdUrl, secondaryCndlGetPasswdDummyPassword
+            );
+            // Secondary doesn't have HTTP password fields in current setup
+            definitions.put("secondary", secondaryDef);
+            logger.info("Secondary data source definition created: {}", secondaryDef.getName());
         }
-
-        logger.info("Attempting to retrieve dynamic password for secondary datasource user: {}", username);
-        String password = passwordRetrievalService.retrievePassword(
-                username,
-                secondaryCndlNDbType,
-                secondaryCndlTns,
-                secondaryCndlGetPasswdUrl,
-                secondaryCndlGetPasswdDummyPassword,
-                "secondary");
-        logger.info("Dynamic password retrieved successfully for secondary user: {}. Proceeding to configure secondary DataSource.", username);
-
-        return DataSourceBuilder.create()
-                .url(dataSource2Properties.getUrl())
-                .username(username)
-                .password(password) // Use dynamically fetched password
-                .driverClassName(dataSource2Properties.getDriverClassName())
-                .build();
+        
+        if (definitions.isEmpty()) {
+            logger.warn("No data source definitions were successfully created. Check application.properties for errors.");
+        }
+        return definitions;
     }
 } 
