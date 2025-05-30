@@ -13,9 +13,12 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
-import java.util.Arrays;
+import com.example.exsql.model.DataSourceDefinition; // Added import
+import java.util.Arrays; // Keep if still needed for other parts, or remove if not
 import java.util.Collections;
 import java.util.List;
+import java.util.Map; // Added import
+import java.util.Set; // Added import
 import java.util.stream.Collectors;
 
 @Controller
@@ -23,8 +26,14 @@ public class SqlUploadController {
 
     private static final Logger logger = LoggerFactory.getLogger(SqlUploadController.class);
 
+    private final SqlExecutionService sqlExecutionService;
+    private final Map<String, DataSourceDefinition> dataSourceDefinitions;
+
     @Autowired
-    private SqlExecutionService sqlExecutionService;
+    public SqlUploadController(SqlExecutionService sqlExecutionService, Map<String, DataSourceDefinition> dataSourceDefinitions) {
+        this.sqlExecutionService = sqlExecutionService;
+        this.dataSourceDefinitions = dataSourceDefinitions;
+    }
 
     @GetMapping("/")
     public String uploadPage(Model model) {
@@ -38,8 +47,10 @@ public class SqlUploadController {
          if (!model.containsAttribute("successMessage")) {
             model.addAttribute("successMessage", null);
         }
-        // Add data source names for the UI
-        model.addAttribute("dataSourceNames", Arrays.asList("primary", "secondary"));
+        // Add data source names from the keys of the dataSourceDefinitions map
+        Set<String> dsNames = dataSourceDefinitions.keySet();
+        logger.info("Available data source names for UI: {}", dsNames);
+        model.addAttribute("dataSourceNames", dsNames);
         return "upload";
     }
 
